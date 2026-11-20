@@ -56,90 +56,90 @@ segment .text
         global  _parse_args
 
 _parse_args:
-        enter   4,0                     ; [ebp-4] = token index i
-        push    ebx
+        enter   4,0                     ; stack frame + 4B local [ebp-4] for loop index i
+        push    ebx                     ; save callee-saved ebx, esi, and edi
         push    esi
         push    edi
 
-        cld                             ; repne scasb must scan forward
+        cld                             ; clear DF so repne scasb scans forward
 
         ; Zero-initialize struct args *out before scanning tokens
-        mov     ebx, [ebp+16]
-        xor     eax, eax
+        mov     ebx, [ebp+16]           ; ebx = struct args *out
+        xor     eax, eax                ; eax = 0
         mov     [ebx], eax              ; out->flags = 0
         mov     [ebx+4], eax            ; out->pattern = NULL
         mov     [ebx+8], eax            ; out->path = NULL
 
-        mov     dword [ebp-4], 1        ; start at argv[1] (skip program name)
+        mov     dword [ebp-4], 1        ; i = 1 (skip argv[0] program name)
 
 .token_loop:
-        mov     eax, [ebp-4]
-        cmp     eax, [ebp+8]            ; signed check for full-int argc
-        jge     .tokens_done
+        mov     eax, [ebp-4]            ; eax = current token index i
+        cmp     eax, [ebp+8]            ; compare i with argc (signed 32-bit int)
+        jge     .tokens_done            ; exit loop when i >= argc
 
-        mov     edx, [ebp+12]           ; argv
-        mov     esi, [edx + eax*4]      ; esi = argv[i]
+        mov     edx, [ebp+12]           ; edx = argv
+        mov     esi, [edx + eax*4]      ; esi = argv[i] (current token string)
 
         ; A token starting with '-' followed by non-NUL is a flag group;
         ; a lone "-" is positional.
-        cmp     byte [esi], '-'
-        jne     .positional
-        cmp     byte [esi+1], 0
-        je      .positional
+        cmp     byte [esi], '-'         ; does token start with '-'?
+        jne     .positional             ; no -> treat as positional argument
+        cmp     byte [esi+1], 0         ; is next byte NUL (lone "-")?
+        je      .positional             ; yes -> treat lone "-" as positional
 
-        inc     esi                     ; advance past leading '-'
+        inc     esi                     ; skip leading '-' to first flag char
 
 .flag_loop:
-        movzx   eax, byte [esi]         ; zero-extend so bytes > 127 return positive
-        test    al, al
-        jz      .next_token
+        movzx   eax, byte [esi]         ; load flag byte (zero-extended for >127)
+        test    al, al                  ; reached NUL terminator?
+        jz      .next_token             ; yes -> done with this flag group
 
-        mov     edi, flag_chars
-        mov     ecx, 5
-        repne   scasb                   ; scan table for flag char in al
-        jne     .return_exit            ; unknown flag: eax holds offending byte
+        mov     edi, flag_chars         ; edi = start of flag lookup table
+        mov     ecx, 5                  ; ecx = table length (5 valid flags)
+        repne   scasb                   ; scan table for al; ZF=1 on match
+        jne     .return_exit            ; unknown flag -> return offending char in eax
 
         ; repne scasb decrements ecx on the hit as well, so index = 4 - ecx
-        mov     edx, 4
-        sub     edx, ecx
-        mov     ecx, edx
-        mov     edx, 1
-        shl     edx, cl
-        or      [ebx], edx              ; out->flags |= (1 << index)
+        mov     edx, 4                  ; max table index (5 - 1)
+        sub     edx, ecx                ; edx = matched flag index (0..4)
+        mov     ecx, edx                ; cl = shift count for shl
+        mov     edx, 1                  ; edx = base bit mask (1)
+        shl     edx, cl                 ; edx = 1 << flag_index
+        or      [ebx], edx              ; set flag bit in out->flags
 
-        inc     esi
-        jmp     .flag_loop
+        inc     esi                     ; advance to next flag char in token
+        jmp     .flag_loop              ; repeat for next char in flag group
 
 .positional:
-        cmp     dword [ebx+4], 0
-        jne     .check_path
-        mov     [ebx+4], esi            ; first positional -> out->pattern
-        jmp     .next_token
+        cmp     dword [ebx+4], 0        ; is out->pattern still NULL?
+        jne     .check_path             ; no -> check out->path next
+        mov     [ebx+4], esi            ; store first positional in out->pattern
+        jmp     .next_token             ; advance to next argv token
 
 .check_path:
-        cmp     dword [ebx+8], 0
-        jne     .usage_error            ; third positional -> usage error
-        mov     [ebx+8], esi            ; second positional -> out->path
+        cmp     dword [ebx+8], 0        ; is out->path still NULL?
+        jne     .usage_error            ; no -> 3rd positional is a usage error
+        mov     [ebx+8], esi            ; store second positional in out->path
 
 .next_token:
-        inc     dword [ebp-4]
-        jmp     .token_loop
+        inc     dword [ebp-4]           ; i++
+        jmp     .token_loop             ; process next argv token
 
 .tokens_done:
-        cmp     dword [ebx+4], 0
-        je      .usage_error
-        cmp     dword [ebx+8], 0
-        je      .usage_error
+        cmp     dword [ebx+4], 0        ; is out->pattern missing?
+        je      .usage_error            ; yes -> usage error
+        cmp     dword [ebx+8], 0        ; is out->path missing?
+        je      .usage_error            ; yes -> usage error
 
         xor     eax, eax                ; return 0 on success
-        jmp     .return_exit
+        jmp     .return_exit            ; jump to function epilogue
 
 .usage_error:
-        mov     eax, -1
+        mov     eax, -1                 ; return -1 on missing/extra operand
 
 .return_exit:
-        pop     edi
+        pop     edi                     ; restore callee-saved edi, esi, ebx
         pop     esi
         pop     ebx
-        leave
-        ret
+        leave                           ; restore caller stack frame (ebp, esp)
+        ret                             ; return to caller with status in eax
