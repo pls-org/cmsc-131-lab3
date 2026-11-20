@@ -1,4 +1,5 @@
-;
+; * SUBSYTEM Owner: Percie Louise Y. Samaniego
+
 ; args.asm - parse_args, the command line to a flag set, a pattern, and a
 ; file name. Callable from C.
 ;
@@ -48,36 +49,97 @@
   section .note.GNU-stack noalloc noexec nowrite progbits
 %endif
 
+segment .data
+flag_chars      db      'n', 'c', 'v', 'i', 'w'         ; bit 0 to bit 4
+
 segment .text
         global  _parse_args
 
 _parse_args:
-        enter   0,0
-        pusha
+        enter   4,0                     ; [ebp-4] = token index i
+        push    ebx
+        push    esi
+        push    edi
 
-        ;
-        ; TODO: parse.
-        ;
-        ; The steps the manual describes:
-        ;
-        ;   clear out->flags, out->pattern, out->path
-        ;   for each token in argv[1..argc-1]:
-        ;       if the token is a flag group:
-        ;           for each byte after the dash:
-        ;               find it in the table with repne scasb
-        ;               not found: return the byte
-        ;               set the bit for its index
-        ;       else if out->pattern is empty: out->pattern = token
-        ;       else if out->path is empty:    out->path = token
-        ;       else: return -1
-        ;   return -1 if the pattern or the path is still empty
-        ;   return 0
-        ;
-        ; After repne scasb finds a byte, ecx has been decremented once for
-        ; the hit as well. Work the index out from that before you shift.
-        ;
+        cld                             ; repne scasb must scan forward
 
-        popa
+        ; Zero-initialize struct args *out before scanning tokens
+        mov     ebx, [ebp+16]
+        xor     eax, eax
+        mov     [ebx], eax              ; out->flags = 0
+        mov     [ebx+4], eax            ; out->pattern = NULL
+        mov     [ebx+8], eax            ; out->path = NULL
+
+        mov     dword [ebp-4], 1        ; start at argv[1] (skip program name)
+
+.token_loop:
+        mov     eax, [ebp-4]
+        cmp     eax, [ebp+8]            ; signed check for full-int argc
+        jge     .tokens_done
+
+        mov     edx, [ebp+12]           ; argv
+        mov     esi, [edx + eax*4]      ; esi = argv[i]
+
+        ; A token starting with '-' followed by non-NUL is a flag group;
+        ; a lone "-" is positional.
+        cmp     byte [esi], '-'
+        jne     .positional
+        cmp     byte [esi+1], 0
+        je      .positional
+
+        inc     esi                     ; advance past leading '-'
+
+.flag_loop:
+        movzx   eax, byte [esi]         ; zero-extend so bytes > 127 return positive
+        test    al, al
+        jz      .next_token
+
+        mov     edi, flag_chars
+        mov     ecx, 5
+        repne   scasb                   ; scan table for flag char in al
+        jne     .return_exit            ; unknown flag: eax holds offending byte
+
+        ; repne scasb decrements ecx on the hit as well, so index = 4 - ecx
+        mov     edx, 4
+        sub     edx, ecx
+        mov     ecx, edx
+        mov     edx, 1
+        shl     edx, cl
+        or      [ebx], edx              ; out->flags |= (1 << index)
+
+        inc     esi
+        jmp     .flag_loop
+
+.positional:
+        cmp     dword [ebx+4], 0
+        jne     .check_path
+        mov     [ebx+4], esi            ; first positional -> out->pattern
+        jmp     .next_token
+
+.check_path:
+        cmp     dword [ebx+8], 0
+        jne     .usage_error            ; third positional -> usage error
+        mov     [ebx+8], esi            ; second positional -> out->path
+
+.next_token:
+        inc     dword [ebp-4]
+        jmp     .token_loop
+
+.tokens_done:
+        cmp     dword [ebx+4], 0
+        je      .usage_error
+        cmp     dword [ebx+8], 0
+        je      .usage_error
+
+        xor     eax, eax                ; return 0 on success
+        jmp     .return_exit
+
+.usage_error:
         mov     eax, -1
+
+.return_exit:
+        pop     edi
+        pop     esi
+        pop     ebx
         leave
         ret
