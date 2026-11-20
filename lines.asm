@@ -96,6 +96,8 @@ _index_lines:
         xor     ebx, ebx                ; entries written = 0
         xor     edx, edx                ; current line starts at offset = 0
 
+        mov     al, 0Ah                 ; newline byte to scan for
+
 .scan:
         ; guard against empty scan
         test    ecx, ecx                ; repne does nothing with ecx = 0
