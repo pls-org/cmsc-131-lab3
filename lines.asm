@@ -96,6 +96,8 @@ _index_lines:
         xor     ebx, ebx                ; entries written = 0
         xor     edx, edx                ; current line starts at offset = 0
 
+        mov     al, 0Ah                 ; newline byte to scan for
+
 .scan:
         ; guard against empty scan
         test    ecx, ecx                ; repne does nothing with ecx = 0
@@ -128,7 +130,7 @@ _index_lines:
         mov     al, 0Ah                 ; reload eax
         jmp     .scan                   ; goes back to scan
 
-.tail
+.tail:
         ; no more newlines. if bytes remain after the last one,
         ; they are a final line with no trailing newline. 
         ; when the file ends with a newline, or is empty, edx == edi - buf (len)
@@ -144,7 +146,7 @@ _index_lines:
         mov     [esi + 4], eax          ; write the length of the last line
         inc     ebx                     ; goes up for the entry just written
 
-.done
+.done:
         mov     [ebp - 4], ebx          ; return value = number of entries written
                                         ; save the count in that local
 
