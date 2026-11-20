@@ -1,3 +1,4 @@
+; * SUBSYTEM Owner: Percie Louise Y. Samaniego
 ;
 ; fmt.asm - int_to_dec, integer to decimal text. Callable from C.
 ;
