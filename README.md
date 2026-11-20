@@ -150,7 +150,7 @@ who owns it.
 
 | Week | Goal | Owner |
 |---|---|---|
-| 1 | Buffering and lines: unblock lines.asm & args.asm, build working prototype that builds and runs on tests/sample.txt | Percie Louise Y. Samaniego & Justin B. Lauricio |
+| 1 | README: Design notes, Subsystem Ownership, and Timeline; Buffering and lines: unblock lines.asm & args.asm, build working prototype that builds and runs on tests/sample.txt | All members |
 | 2 | Matching: complete all match routine implementations, get rengrep with no flags to work correctly | Samantha F. Mok |
 | 3 | Formatting and flags: finish int_to_dec routine, flag table, additional tests | Percie Louise Y. Samaniego |
 | 4 | Defense | All members |
