@@ -46,8 +46,8 @@ segment .text
         global  _index_lines
 
 _index_lines:
-        enter   0,0
-        pusha
+        enter   4,0     ; one local: the return value 
+        pusha           ; saves ebx, esi, edi
 
         ;
         ; TODO: build the index.
@@ -66,7 +66,93 @@ _index_lines:
         ; writing at max.
         ;
 
+        ; --------------------------------------------------------------------------
+        ; For tracking, registers inside the routine:
+        ;
+        ;       al      the newline byte, 0x0A (scasb compares against it)
+        ;       ebx     number of entries written so far
+        ;       ecx     bytes of the buffer still to scan (repne counter)
+        ;       edx     offset where the current line starts
+        ;       esi     pointer to the next free struct line in out
+        ;       edi     scan cursor into buf (scasb advances it)
+        ;       [ebp-4] the return value, parked here because popa restores eax
+        ;
+        ; stack frame:
+        ;       The contract, from driver.c:
+        ;
+        ;       int max                     [ebp+20]
+        ;       struct line *out            [ebp+16]
+        ;       int len                     [ebp+12]
+        ;       char *buf                   [ebp+8]
+        ;
+        ;       struct line { int offset; int length; };
+        ; --------------------------------------------------------------------------------------
+
+        cld 
+
+        mov     edi, [ebp + 8]          ; scan cursor = buf
+        mov     ecx, [ebp + 12]         ; bytes left = len (counter for scasb)
+        mov     esi, [ebp + 16]         ; next free struct line slot = out 
+        xor     ebx, ebx                ; entries written = 0
+        xor     edx, edx                ; current line starts at offset = 0
+
+.scan:
+        ; guard against empty scan
+        test    ecx, ecx                ; repne does nothing with ecx = 0
+        jz      .tail                   ; leaves ZF stale, so stop here instead
+        
+        ; search for the newline
+        repne scasb                     ; advance edi past to the next newline, or run out
+
+        ; scasb ->      cmp al, [edi]
+        ;               inc edi
+
+        jne     .tail                   ; ZF clear: ecx hit 0 with no newline found
+
+        ; a newline was found. edi now points one past it
+        cmp     ebx, [ebp + 20]         ; check capacity
+        jge     .done                   ; if no. of entries >= max, done
+
+        mov     [esi], edx              ; write the offset
+        mov     eax, edi                ; eax <- edi (scan cursor)
+        sub     eax, [ebp + 8]          ; scan cursor - buf (offset just past the newline)
+        dec     eax                     ; offset of the newline itself
+        sub     eax, edx                ; length = newline offset - line start
+        mov     [esi + 4], eax          ; write the length
+
+        ; prepare for the next line
+        mov     edx, edi
+        sub     edx, [ebp + 8]          ; new line start = offset of the next byte after the newline
+        add     esi, 8                  ; sizeof(struct line), forward 8 bytes
+        inc     ebx                     ; goes up for the entry just written
+        mov     al, 0Ah                 ; reload eax
+        jmp     .scan                   ; goes back to scan
+
+.tail
+        ; no more newlines. if bytes remain after the last one,
+        ; they are a final line with no trailing newline. 
+        ; when the file ends with a newline, or is empty, edx == edi - buf (len)
+        ; and nothing is added
+
+        mov     eax, [ebp + 12]         ; eax = len
+        sub     eax, edx                ; len - last line start offset (bytes remaining)
+        jle     .done                   ; if <= 0, no more lines to add
+
+        cmp     ebx, [ebp + 20]         ; check capacity
+        jge     .done                   ; if no. of entries >= max (out is full), done        
+        mov     [esi], edx              ; write the offset of the last line
+        mov     [esi + 4], eax          ; write the length of the last line
+        inc     ebx                     ; goes up for the entry just written
+
+.done
+        mov     [ebp - 4], ebx          ; return value = number of entries written
+                                        ; save the count in that local
+
         popa
         mov     eax, 0
+        
+        mov     eax, [ebp - 4]          ; return value = number of entries written
+                                        ; now load the count to eax                                        
+
         leave
         ret
