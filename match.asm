@@ -1,4 +1,5 @@
-;
+; Subsystem Owner: Samantha F. Mok
+
 ; match.asm - line_matches, substring search with case folding and word
 ; boundaries. Callable from C.
 ;
