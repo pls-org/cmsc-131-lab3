@@ -151,8 +151,6 @@ _index_lines:
                                         ; save the count in that local
 
         popa
-        mov     eax, 0
-        
         mov     eax, [ebp - 4]          ; return value = number of entries written
                                         ; now load the count to eax                                        
 
