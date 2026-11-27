@@ -62,17 +62,37 @@ segment .text
 
 _int_to_dec:
         enter   0,0
-        pusha
+        push    ebx                     ; preserve callee-saved ebx, esi, edi
+        push    esi
+        push    edi
 
-        ;
-        ; TODO: convert.
-        ;
-        ; The loop above is the manual's. Your job is to make it write
-        ; into out (which is [ebp+12]) and return the digit count in eax.
-        ; The pop loop writes one byte per digit to out[0..count-1].
-        ;
+        cld                             ; advance forward when writing with stosb
+        mov     eax, [ebp+8]            ; eax = n (number to convert)
+        mov     edi, [ebp+12]           ; edi = out (destination buffer)
+                                        ; at this point given by lab manual
+        mov     ebx, 10                 ; divisor for base-10 extraction
+        xor     ecx, ecx                ; digit count = 0
 
-        popa
-        mov     eax, 0
+.digit_loop:
+        xor     edx, edx                ; clear edx before div (holds remainder)
+        div     ebx                     ; eax = quotient, edx = remainder (last digit)
+        add     dl, '0'                 ; convert digit to ASCII character
+        push    edx                     ; push digit onto stack to reverse its order
+        inc     ecx                     ; count++
+        test    eax, eax                ; stop when quotient is 0 (handles n == 0)
+        jne     .digit_loop
+
+        mov     esi, ecx                ; save digit count to return later
+
+.pop_loop:
+        pop     eax                     ; pop digits back in left-to-right order
+        stosb                           ; store al into [edi] and advance edi
+        loop    .pop_loop               ; repeat for all ecx digits
+
+        mov     eax, esi                ; return total bytes written
+
+        pop     edi                     ; restore saved registers
+        pop     esi
+        pop     ebx
         leave
         ret
