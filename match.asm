@@ -66,25 +66,134 @@ segment .text
 
 _line_matches:
         enter   0,0
-        pusha
+        pusha                           ; save all registers; popa restores them
 
-        ;
-        ; TODO: search.
-        ;
-        ; The loop the manual describes:
-        ;
-        ;   for start = 0 to linelen - patlen:
-        ;       compare patlen bytes at line+start against pat
-        ;       if equal: check word boundaries if whole
-        ;                 return 1 if they pass
-        ;   return 0
-        ;
-        ; The fast path (fold == 0) uses repe cmpsb. The folding path
-        ; compares a byte at a time, folding both sides in a register.
-        ; Both need cld first.
-        ;
+        cld                             ; make string instructions go forward
 
-        popa
-        mov     eax, 0
+        ; Work out the last place the pattern could start: linelen - patlen.
+        ; If the pattern is longer than the line this is negative, so there
+        ; is nowhere to look. js is a SIGNED test, so a negative result stops
+        ; here. (An unsigned test would read it as a huge number and scan
+        ; past the end of the line.)
+        
+        mov     eax, [ebp+12]           ; eax = linelen
+        sub     eax, [ebp+20]           ; eax = linelen - patlen
+        js      .no_match               ; negative: pattern too long, no match
+
+        xor     ebx, ebx                ; ebx = start = 0 (where we try next)
+
+.scan:
+        ; Stop when start is past the last valid position (signed compare).
+        mov     eax, [ebp+12]           ; eax = linelen
+        sub     eax, [ebp+20]           ; eax = last valid start
+        cmp     ebx, eax
+        jg      .no_match               ; tried every position, no match
+
+        ; Point esi at the pattern and edi at the line, at this start.
+        mov     esi, [ebp+16]           ; esi = pattern
+        mov     edi, [ebp+8]
+        add     edi, ebx                ; edi = line + start
+        mov     ecx, [ebp+20]           ; ecx = number of bytes to compare
+
+        cmp     dword [ebp+24], 0       ; is -i on?
+        jne     .fold_compare           ; yes: use the case-folding loop
+
+        ; ---- Normal compare (no -i): repe cmpsb ----
+        test    ecx, ecx                ; empty pattern: sets ZF so it counts
+                                        ; as equal (repe does nothing at ecx=0)
+        repe    cmpsb                   ; compare bytes while they are equal
+        jne     .next                   ; a byte differed: try the next start
+        jmp     .candidate              ; all bytes equal: we have a match
+
+        ; ---- Compare with -i: one byte at a time, lowercased in registers.
+        ; The text in memory is never changed. ----
+.fold_compare:
+        test    ecx, ecx                ; empty pattern: nothing to compare,
+        jz      .candidate              ; so it matches
+.fold_loop:
+        mov     al, [esi]               ; al = next pattern byte
+        mov     dl, [edi]               ; dl = next line byte
+        inc     esi
+        inc     edi
+
+        cmp     al, 'A'                 ; if al is 'A'..'Z', make it lowercase
+        jb      .al_done
+        cmp     al, 'Z'
+        ja      .al_done
+        add     al, 32                  ; 'a' - 'A' = 32
+.al_done:
+        cmp     dl, 'A'                 ; same for dl
+        jb      .dl_done
+        cmp     dl, 'Z'
+        ja      .dl_done
+        add     dl, 32
+.dl_done:
+        cmp     al, dl
+        jne     .next                   ; bytes differ: try the next start
+        dec     ecx                     ; one fewer byte left to compare
+        jnz     .fold_loop              ; more bytes: keep going
+
+.candidate:
+        ; The text matches at this start. Without -w we are done.
+        cmp     dword [ebp+28], 0       ; is -w on?
+        je      .found                  ; no: it's a match
+
+        ; -w: the match must not touch a word character on either side.
+        ; Check the byte BEFORE the match (skip if match is at line start).
+        test    ebx, ebx
+        jz      .check_after            ; start is 0: nothing before it
+        mov     esi, [ebp+8]
+        mov     al, [esi+ebx-1]         ; al = byte before the match
+        call    .is_word
+        jc      .next                   ; word character: reject, keep looking
+
+.check_after:
+        ; Check the byte AFTER the match (skip if match is at line end).
+        mov     edx, ebx
+        add     edx, [ebp+20]           ; edx = start + patlen = byte after
+        cmp     edx, [ebp+12]
+        je      .found                  ; match ends at end of line: OK
+        mov     esi, [ebp+8]
+        mov     al, [esi+edx]           ; al = byte after the match
+        call    .is_word
+        jc      .next                   ; word character: reject, keep looking
+
+.found:
+        popa                            ; restore registers
+        mov     eax, 1                  ; return 1 = match
         leave
+        ret
+
+.next:
+        inc     ebx                     ; move to the next start position
+        jmp     .scan                   ; (a rejected match does not end
+                                        ; the search)
+
+.no_match:
+        popa                            ; restore registers
+        mov     eax, 0                  ; return 0 = no match
+        leave
+        ret
+
+; .is_word: is the byte in al a word character (A-Z, a-z, 0-9, _)?
+; Returns the answer in the carry flag: CF = 1 yes, CF = 0 no.
+; Uses dl as scratch.
+.is_word:
+        cmp     al, '_'
+        je      .word_yes
+        cmp     al, '0'
+        jb      .word_no                ; below '0': not a word character
+        cmp     al, '9'
+        jbe     .word_yes               ; '0'..'9'
+        mov     dl, al
+        or      dl, 0x20                ; make letters lowercase to test once
+        cmp     dl, 'a'
+        jb      .word_no
+        cmp     dl, 'z'
+        ja      .word_no
+.word_yes:
+        stc                             ; CF = 1
+        ret
+.word_no:
+        clc                             ; CF = 0
         ret
